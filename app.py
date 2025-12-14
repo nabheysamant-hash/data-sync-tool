@@ -5,127 +5,128 @@ import time
 import json
 
 # --- PAGE SETUP ---
-st.set_page_config(
-    page_title="Data Sync Pro", 
-    page_icon="🚀",
-    layout="centered"
-)
+st.set_page_config(page_title="Data Sync Pro (Debug Mode)", page_icon="🐞", layout="centered")
 
-# --- HEADER ---
-st.title("🚀 Data Sync Pro")
-st.markdown("Upload your CSV and sync products to the merchandise feed.")
+st.title("🐞 Data Sync Pro (Diagnostic)")
+st.markdown("Use this version to debug why 'Success' is appearing for bad data.")
 st.divider()
 
-# --- SIDEBAR CONFIGURATION ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ Configuration")
+    url = st.text_input("Endpoint URL", "https://services.onlinesales.ai/merchandiseFeedService/products")
+    retailer_id = st.text_input("Retailer ID (x-retailer-id)", "407")
+    token = st.text_input("Token (x-token)", type="password")
+    batch_size = st.slider("Batch Size", 1, 50, 5) # Default small for debugging
     
-    url = st.text_input(
-        "Endpoint URL", 
-        value="https://services.onlinesales.ai/merchandiseFeedService/products"
-    )
-    
-    retailer_id = st.text_input(
-        "Retailer ID (x-retailer-id)", 
-        value="407",
-        help="The numeric ID found in your dashboard."
-    )
-    
-    token = st.text_input(
-        "Token (x-token)", 
-        type="password",
-        help="Your secret API access token."
-    )
-    
-    batch_size = st.slider("Batch Size", min_value=10, max_value=200, value=50)
+    st.divider()
+    debug_mode = st.checkbox("Enable Deep Debugging", value=True)
+    st.info("Keep 'Deep Debugging' ON to see raw server responses.")
 
-# --- MAIN INTERFACE ---
+# --- MAIN ---
 uploaded_file = st.file_uploader("📂 Upload Source CSV", type=["csv"])
 
 if uploaded_file:
-    # Preview Data
-    try:
-        df = pd.read_csv(uploaded_file, encoding='utf-8-sig')
-        # Clean headers: remove spaces
-        df.columns = df.columns.str.strip()
-        
-        st.write(f"**Preview ({len(df)} rows detected):**")
-        st.dataframe(df.head(3), use_container_width=True)
-        
-        # --- ACTION BUTTON ---
-        if st.button("🚀 Start Synchronization", type="primary"):
-            if not token:
-                st.error("❌ API Token is missing!")
-            else:
-                # Initialize Progress
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                logs_expander = st.expander("View Transaction Logs", expanded=True)
+    df = pd.read_csv(uploaded_file, encoding='utf-8-sig')
+    df.columns = df.columns.str.strip() # Clean headers
+    
+    st.subheader("1. Data Preview")
+    st.dataframe(df.head(3))
+    
+    # --- VALIDATION CHECK BEFORE SENDING ---
+    required_cols = ['id', 'title']
+    missing_cols = [c for c in required_cols if c not in df.columns]
+    
+    if missing_cols:
+        st.error(f"❌ CRITICAL ERROR: Your CSV is missing required columns: {missing_cols}")
+        st.warning(" The script uses these columns to build the JSON. If they are missing, it sends NOTHING.")
+        st.stop() # Stop execution here
+
+    if st.button("🚀 Start Diagnostic Sync", type="primary"):
+        if not token:
+            st.error("❌ Missing Token")
+        else:
+            progress_bar = st.progress(0)
+            logs = st.container()
+            
+            success_count = 0
+            error_count = 0
+            skipped_count = 0
+            
+            records = df.to_dict(orient='records')
+            total_records = len(records)
+            
+            # --- LOOP ---
+            for i in range(0, total_records, batch_size):
+                batch = records[i:i+batch_size]
                 
-                success_count = 0
-                error_count = 0
-                
-                # Prepare Data
-                records = df.to_dict(orient='records')
-                total_records = len(records)
-                
-                # --- PROCESSING LOOP ---
-                for i in range(0, total_records, batch_size):
-                    batch = records[i:i+batch_size]
-                    
-                    # 1. Clean Batch (Remove NaN/Empty)
-                    clean_batch = []
-                    for row in batch:
-                        # Only keep fields that are not empty/null
+                # 1. Filter Data
+                clean_batch = []
+                for row in batch:
+                    # Logic: Must have ID and Title to be valid
+                    if pd.notna(row.get('id')) and pd.notna(row.get('title')):
+                         # Remove empty keys
                         clean_row = {k: v for k, v in row.items() if pd.notna(v) and str(v).strip() != ""}
-                        # Skip rows without ID or Title
-                        if 'id' in clean_row and 'title' in clean_row:
-                            clean_batch.append(clean_row)
+                        clean_batch.append(clean_row)
+                    else:
+                        skipped_count += 1
+                
+                if not clean_batch:
+                    with logs:
+                        st.warning(f"⚠️ Batch {i//batch_size + 1}: Skipped because all rows lacked 'id' or 'title'.")
+                    continue
+
+                # 2. Setup Request
+                api_headers = {
+                    'Content-Type': 'application/json',
+                    'x-retailer-id': retailer_id,
+                    'x-token': token
+                }
+                payload = {"products": clean_batch}
+
+                # --- DEBUG: SHOW PAYLOAD ---
+                if debug_mode and i == 0:
+                    with logs:
+                        st.info("🔎 PREVIEW: Here is the exact JSON being sent (First Batch):")
+                        st.json(payload)
+
+                # 3. Send Request
+                try:
+                    resp = requests.post(url, json=payload, headers=api_headers)
                     
-                    if not clean_batch:
-                        continue
-
-                    # 2. Prepare Headers & Payload
-                    api_headers = {
-                        'Content-Type': 'application/json',
-                        'x-retailer-id': retailer_id,
-                        'x-token': token
-                    }
-                    payload = {"products": clean_batch}
-
-                    # 3. Send Request
+                    # --- DEBUG: INSPECT RESPONSE ---
+                    server_msg = "No content"
                     try:
-                        resp = requests.post(url, json=payload, headers=api_headers)
-                        
-                        if resp.status_code == 200:
-                            success_count += len(clean_batch)
-                            logs_expander.write(f"✅ Batch {i//batch_size + 1}: Success ({len(clean_batch)} items)")
-                        elif resp.status_code == 401:
-                            error_count += len(clean_batch)
-                            logs_expander.error("❌ 401 Unauthorized - Check Credentials")
-                            break # Stop on auth error
-                        else:
-                            error_count += len(clean_batch)
-                            logs_expander.warning(f"⚠️ Error {resp.status_code}: {resp.text[:50]}...")
-                            
-                    except Exception as e:
+                        server_msg = resp.json()
+                    except:
+                        server_msg = resp.text
+
+                    if resp.status_code == 200:
+                        success_count += len(clean_batch)
+                        with logs:
+                            st.success(f"✅ Batch {i//batch_size + 1} Sent. Server said: {resp.status_code}")
+                            if debug_mode:
+                                st.json(server_msg) # Show what the server actually returned
+                    else:
                         error_count += len(clean_batch)
-                        logs_expander.error(f"❌ Network Error: {e}")
+                        with logs:
+                            st.error(f"❌ Batch Failed ({resp.status_code})")
+                            st.write(server_msg)
 
-                    # 4. Update Progress
-                    current_progress = min((i + batch_size) / total_records, 1.0)
-                    progress_bar.progress(current_progress)
-                    status_text.caption(f"Processed: {i + len(batch)} / {total_records}")
-                    time.sleep(0.1) # Slight throttle
+                except Exception as e:
+                    error_count += len(clean_batch)
+                    st.error(f"Network Error: {e}")
+                
+                # Update UI
+                progress_bar.progress(min((i + batch_size) / total_records, 1.0))
+                time.sleep(0.1)
 
-                # --- SUMMARY ---
-                st.success("Job Complete!")
-                col1, col2 = st.columns(2)
-                col1.metric("Successfully Sent", success_count)
-                col2.metric("Failed", error_count)
-
-    except Exception as e:
-        st.error(f"Error reading file: {e}")
-
-else:
-    st.info("👆 Upload a CSV file to get started.")
+            # --- FINAL REPORT ---
+            st.divider()
+            if success_count == 0 and error_count == 0:
+                 st.error("❌ RESULT: 0 items sent. Your CSV headers likely do not match 'id' and 'title'.")
+            else:
+                 col1, col2, col3 = st.columns(3)
+                 col1.metric("Success", success_count)
+                 col2.metric("Failed", error_count)
+                 col3.metric("Skipped (Invalid Data)", skipped_count)
