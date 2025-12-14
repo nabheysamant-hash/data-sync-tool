@@ -22,9 +22,9 @@ with st.sidebar:
     
     col1, col2 = st.columns(2)
     with col1:
-        retailer_id = st.text_input("Retailer ID", Value=" ", placeholder="Add Agency ID")
+        retailer_id = st.text_input("Retailer ID", value="", placeholder="Add Agency ID")
     with col2:
-        token = st.text_input2("Token", value="", type="password", placeholder="Paste token here")
+        token = st.text_input("Token", value="", type="password", placeholder="Paste token here")
         
     st.divider()
     
