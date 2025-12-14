@@ -5,128 +5,117 @@ import time
 import json
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="Data Sync Pro (Debug Mode)", page_icon="🐞", layout="centered")
+st.set_page_config(page_title="Data Sync Pro", page_icon="🔁", layout="centered")
 
-st.title("🐞 Data Sync Pro (Diagnostic)")
-st.markdown("Use this version to debug why 'Success' is appearing for bad data.")
+st.title("🔁 Data Sync Pro")
+st.markdown("Sync your CSV data to the OnlineSales.ai merchandise feed.")
 st.divider()
 
-# --- SIDEBAR ---
+# --- SIDEBAR CONFIGURATION ---
 with st.sidebar:
-    st.header("⚙️ Configuration")
-    url = st.text_input("Endpoint URL", "https://services.onlinesales.ai/merchandiseFeedService/products")
-    retailer_id = st.text_input("Retailer ID (x-retailer-id)", "407")
-    token = st.text_input("Token (x-token)", type="password")
-    batch_size = st.slider("Batch Size", 1, 50, 5) # Default small for debugging
+    st.header("⚙️ Connection Settings")
+    
+    url = st.text_input(
+        "Endpoint URL", 
+        value="https://services.onlinesales.ai/merchandiseFeedService/products"
+    )
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        retailer_id = st.text_input("Retailer ID", "407")
+    with col2:
+        token = st.text_input("Token", type="password")
+        
+    st.divider()
+    
+    st.header("🗺️ Source Map")
+    st.info("Define how your CSV columns map to the API fields. The order must match your CSV columns.")
+    
+    # --- RESTORED FEATURE: HEADER MAPPING ---
+    default_headers = "id, category, secondary_categories, title, brand, link, image_link, price, availability, sale_price, store_id, description"
+    headers_input = st.text_area("CSV Header Map (Comma Separated)", value=default_headers, height=150)
     
     st.divider()
-    debug_mode = st.checkbox("Enable Deep Debugging", value=True)
-    st.info("Keep 'Deep Debugging' ON to see raw server responses.")
+    batch_size = st.slider("Batch Size", 10, 100, 50)
 
-# --- MAIN ---
+# --- MAIN INTERFACE ---
 uploaded_file = st.file_uploader("📂 Upload Source CSV", type=["csv"])
 
 if uploaded_file:
-    df = pd.read_csv(uploaded_file, encoding='utf-8-sig')
-    df.columns = df.columns.str.strip() # Clean headers
+    # 1. Parse the User's Header Map
+    # Split string by comma and remove spaces
+    user_headers = [h.strip() for h in headers_input.split(',') if h.strip()]
     
-    st.subheader("1. Data Preview")
-    st.dataframe(df.head(3))
-    
-    # --- VALIDATION CHECK BEFORE SENDING ---
-    required_cols = ['id', 'title']
-    missing_cols = [c for c in required_cols if c not in df.columns]
-    
-    if missing_cols:
-        st.error(f"❌ CRITICAL ERROR: Your CSV is missing required columns: {missing_cols}")
-        st.warning(" The script uses these columns to build the JSON. If they are missing, it sends NOTHING.")
-        st.stop() # Stop execution here
+    try:
+        # 2. Read CSV using the User's Headers
+        # header=0 means "The file has a header row, but ignore it and use my 'names' list instead"
+        df = pd.read_csv(uploaded_file, names=user_headers, header=0, encoding='utf-8-sig')
+        
+        st.write(f"**Preview ({len(df)} rows):**")
+        st.dataframe(df.head(3))
+        
+        # Validation
+        if 'id' not in df.columns or 'title' not in df.columns:
+            st.error(f"❌ Mapping Error: The app expects columns named 'id' and 'title'. Your map has: {df.columns.tolist()}")
+            st.stop()
 
-    if st.button("🚀 Start Diagnostic Sync", type="primary"):
-        if not token:
-            st.error("❌ Missing Token")
-        else:
-            progress_bar = st.progress(0)
-            logs = st.container()
-            
-            success_count = 0
-            error_count = 0
-            skipped_count = 0
-            
-            records = df.to_dict(orient='records')
-            total_records = len(records)
-            
-            # --- LOOP ---
-            for i in range(0, total_records, batch_size):
-                batch = records[i:i+batch_size]
-                
-                # 1. Filter Data
-                clean_batch = []
-                for row in batch:
-                    # Logic: Must have ID and Title to be valid
-                    if pd.notna(row.get('id')) and pd.notna(row.get('title')):
-                         # Remove empty keys
-                        clean_row = {k: v for k, v in row.items() if pd.notna(v) and str(v).strip() != ""}
-                        clean_batch.append(clean_row)
-                    else:
-                        skipped_count += 1
-                
-                if not clean_batch:
-                    with logs:
-                        st.warning(f"⚠️ Batch {i//batch_size + 1}: Skipped because all rows lacked 'id' or 'title'.")
-                    continue
-
-                # 2. Setup Request
-                api_headers = {
-                    'Content-Type': 'application/json',
-                    'x-retailer-id': retailer_id,
-                    'x-token': token
-                }
-                payload = {"products": clean_batch}
-
-                # --- DEBUG: SHOW PAYLOAD ---
-                if debug_mode and i == 0:
-                    with logs:
-                        st.info("🔎 PREVIEW: Here is the exact JSON being sent (First Batch):")
-                        st.json(payload)
-
-                # 3. Send Request
-                try:
-                    resp = requests.post(url, json=payload, headers=api_headers)
-                    
-                    # --- DEBUG: INSPECT RESPONSE ---
-                    server_msg = "No content"
-                    try:
-                        server_msg = resp.json()
-                    except:
-                        server_msg = resp.text
-
-                    if resp.status_code == 200:
-                        success_count += len(clean_batch)
-                        with logs:
-                            st.success(f"✅ Batch {i//batch_size + 1} Sent. Server said: {resp.status_code}")
-                            if debug_mode:
-                                st.json(server_msg) # Show what the server actually returned
-                    else:
-                        error_count += len(clean_batch)
-                        with logs:
-                            st.error(f"❌ Batch Failed ({resp.status_code})")
-                            st.write(server_msg)
-
-                except Exception as e:
-                    error_count += len(clean_batch)
-                    st.error(f"Network Error: {e}")
-                
-                # Update UI
-                progress_bar.progress(min((i + batch_size) / total_records, 1.0))
-                time.sleep(0.1)
-
-            # --- FINAL REPORT ---
-            st.divider()
-            if success_count == 0 and error_count == 0:
-                 st.error("❌ RESULT: 0 items sent. Your CSV headers likely do not match 'id' and 'title'.")
+        # --- ACTION ---
+        if st.button("🚀 Start Synchronization", type="primary"):
+            if not token:
+                st.error("❌ API Token is missing!")
             else:
-                 col1, col2, col3 = st.columns(3)
-                 col1.metric("Success", success_count)
-                 col2.metric("Failed", error_count)
-                 col3.metric("Skipped (Invalid Data)", skipped_count)
+                progress_bar = st.progress(0)
+                logs_expander = st.expander("View Logs", expanded=True)
+                
+                success_count = 0
+                error_count = 0
+                records = df.to_dict(orient='records')
+                total_records = len(records)
+                
+                # --- LOOP ---
+                for i in range(0, total_records, batch_size):
+                    batch = records[i:i+batch_size]
+                    
+                    # Clean Batch
+                    clean_batch = []
+                    for row in batch:
+                        # Remove empty keys/values
+                        clean_row = {k: v for k, v in row.items() if pd.notna(v) and str(v).strip() != ""}
+                        
+                        # Basic validation
+                        if clean_row.get('id') and clean_row.get('title'):
+                            clean_batch.append(clean_row)
+                            
+                    if not clean_batch: continue
+
+                    # Send
+                    api_headers = {
+                        'Content-Type': 'application/json',
+                        'x-retailer-id': retailer_id,
+                        'x-token': token
+                    }
+                    payload = {"products": clean_batch}
+
+                    try:
+                        resp = requests.post(url, json=payload, headers=api_headers)
+                        
+                        if resp.status_code == 200:
+                            success_count += len(clean_batch)
+                            logs_expander.success(f"Batch {i//batch_size + 1}: OK ({len(clean_batch)} items)")
+                        else:
+                            error_count += len(clean_batch)
+                            logs_expander.error(f"Batch {i//batch_size + 1}: Failed ({resp.status_code})")
+                            
+                    except Exception as e:
+                        error_count += len(clean_batch)
+                        logs_expander.error(f"Network Error: {e}")
+
+                    # Progress
+                    progress_bar.progress(min((i + batch_size) / total_records, 1.0))
+                    time.sleep(0.1)
+
+                st.success(f"Job Complete! Sent: {success_count} | Failed: {error_count}")
+
+    except Exception as e:
+        st.error(f"Error reading file: {e}")
+        st.warning("Tip: Make sure the number of items in your 'Header Map' matches the number of columns in your CSV.")
