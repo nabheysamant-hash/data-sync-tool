@@ -22,7 +22,7 @@ with st.sidebar:
     
     col1, col2 = st.columns(2)
     with col1:
-        retailer_id = st.text_input("Retailer ID", "407")
+        retailer_id = st.text_input("Retailer ID", " ")
     with col2:
         token = st.text_input("Token", type="password")
         
@@ -119,3 +119,4 @@ if uploaded_file:
     except Exception as e:
         st.error(f"Error reading file: {e}")
         st.warning("Tip: Make sure the number of items in your 'Header Map' matches the number of columns in your CSV.")
+
