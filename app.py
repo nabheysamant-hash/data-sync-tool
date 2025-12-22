@@ -77,3 +77,73 @@ if uploaded_file:
                         clean_row = {k: v for k, v in row.items() if pd.notna(v) and str(v).strip() != ""}
                         if clean_row.get('id') and clean_row.get('title'):
                             clean_batch.append(clean_row)
+                            
+                    if not clean_batch: continue
+
+                    # Prepare Request
+                    api_headers = {
+                        'Content-Type': 'application/json',
+                        'x-retailer-id': retailer_id,
+                        'x-token': token
+                    }
+                    payload = {"products": clean_batch}
+
+                    try:
+                        # Send Request
+                        resp = requests.post(url, json=payload, headers=api_headers)
+                        
+                        # --- 2. DETAILED RESPONSE CAPTURE ---
+                        try:
+                            # Try to parse JSON response
+                            response_body = resp.json()
+                        except:
+                            # If not JSON, capture raw text (e.g., HTML error page)
+                            response_body = resp.text
+
+                        batch_num = (i // batch_size) + 1
+                        is_success = resp.status_code == 200
+                        
+                        # Icon and Label
+                        icon = "✅" if is_success else "❌"
+                        label = f"Batch {batch_num}: {resp.status_code} ({len(clean_batch)} items)"
+                        
+                        # Update Counters
+                        if is_success:
+                            success_count += len(clean_batch)
+                        else:
+                            error_count += len(clean_batch)
+
+                        # --- LOG DISPLAY ---
+                        # We use an expander to hold the details
+                        with st.expander(f"{icon} {label}", expanded=auto_expand or not is_success):
+                            
+                            # Use Tabs to organize the detailed view
+                            tab1, tab2, tab3 = st.tabs(["Response Body", "Sent Payload", "Response Headers"])
+                            
+                            with tab1:
+                                st.markdown("#### Server Response")
+                                st.json(response_body)
+                                
+                            with tab2:
+                                st.markdown("#### What we sent")
+                                st.json(payload)
+                                
+                            with tab3:
+                                st.markdown("#### Meta Data")
+                                st.write(f"**Status Code:** {resp.status_code}")
+                                st.write("**Headers:**")
+                                st.write(dict(resp.headers))
+
+                    except Exception as e:
+                        error_count += len(clean_batch)
+                        st.error(f"Network Error: {e}")
+
+                    # Progress Bar Update
+                    progress_bar.progress(min((i + batch_size) / total_records, 1.0))
+                    status_box.caption(f"Processing... {min(i + batch_size, total_records)}/{total_records}")
+                    time.sleep(0.1)
+
+                st.success(f"Job Complete! Sent: {success_count} | Failed: {error_count}")
+
+    except Exception as e:
+        st.error(f"Error reading file: {e}")
