@@ -17,7 +17,7 @@ with st.sidebar:
     
     url = st.text_input(
         "Endpoint URL", 
-        value="https://services.onlinesales.ai/merchandiseFeedService/products"
+        value="https://apiv2.onlinesales.ai/catalogSyncService/products"
     )
     
     col1, col2 = st.columns(2)
@@ -128,3 +128,4 @@ if uploaded_file:
 
     except Exception as e:
         st.error(f"Error reading file: {e}")
+
