@@ -5,20 +5,19 @@ import time
 import json
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="Data Sync Pro", page_icon="🔁", layout="centered")
+st.set_page_config(page_title="Data Sync Pro", page_icon="⏱️", layout="centered")
 
-st.title("🔁 Data Sync Pro v2")
-st.markdown("Sync your CSV data to the **OnlineSales.ai Catalog Sync Service**.")
+st.title("⏱️ Data Sync Pro (Rate Limited)")
+st.markdown("Sync CSV data with strict rate limiting to prevent API bans.")
 st.divider()
 
 # --- SIDEBAR CONFIGURATION ---
 with st.sidebar:
     st.header("⚙️ Connection Settings")
     
-    # 1. UPDATED ENDPOINT URL
     url = st.text_input(
         "Endpoint URL", 
-        value="https://apiv2.onlinesales.ai/catalogSyncService/products"
+        value="https://services.onlinesales.ai/merchandiseFeedService/products"
     )
     
     col1, col2 = st.columns(2)
@@ -29,14 +28,18 @@ with st.sidebar:
         
     st.divider()
     
-    st.header("🗺️ Source Map")
-    default_headers = "id, category, secondary_categories, title, brand, link, image_link, price, availability, sale_price, store_id, description"
-    headers_input = st.text_area("CSV Header Map (Comma Separated)", value=default_headers, height=150)
+    st.header("⚡ Performance Control")
+    # NEW: Rate Limit Slider
+    req_per_sec = st.slider("Max Requests per Second", 1, 10, 5, help="Controls the speed to avoid hitting API limits.")
+    batch_size = st.slider("Batch Size", 10, 100, 50)
     
     st.divider()
-    batch_size = st.slider("Batch Size", 10, 100, 50)
-    # Checkbox to auto-expand details
-    auto_expand = st.checkbox("Auto-expand Log Details", value=False)
+    
+    st.header("🗺️ Source Map")
+    default_headers = "id, category, secondary_categories, title, brand, link, image_link, price, availability, sale_price, store_id, description"
+    headers_input = st.text_area("CSV Header Map", value=default_headers, height=150)
+    
+    show_details = st.checkbox("Show Raw Server Responses", value=False)
 
 # --- MAIN INTERFACE ---
 uploaded_file = st.file_uploader("📂 Upload Source CSV", type=["csv"])
@@ -67,6 +70,10 @@ if uploaded_file:
                 records = df.to_dict(orient='records')
                 total_records = len(records)
                 
+                # Calculate sleep time based on user setting
+                # Example: 5 requests/sec = 1/5 = 0.2 seconds sleep
+                sleep_time = 1.0 / req_per_sec
+                
                 # --- PROCESSING LOOP ---
                 for i in range(0, total_records, batch_size):
                     batch = records[i:i+batch_size]
@@ -80,7 +87,7 @@ if uploaded_file:
                             
                     if not clean_batch: continue
 
-                    # Prepare Request
+                    # Send
                     api_headers = {
                         'Content-Type': 'application/json',
                         'x-retailer-id': retailer_id,
@@ -89,59 +96,37 @@ if uploaded_file:
                     payload = {"products": clean_batch}
 
                     try:
-                        # Send Request
                         resp = requests.post(url, json=payload, headers=api_headers)
                         
-                        # --- 2. DETAILED RESPONSE CAPTURE ---
                         try:
-                            # Try to parse JSON response
-                            response_body = resp.json()
+                            server_response = resp.json()
                         except:
-                            # If not JSON, capture raw text (e.g., HTML error page)
-                            response_body = resp.text
-
+                            server_response = resp.text
+                        
                         batch_num = (i // batch_size) + 1
-                        is_success = resp.status_code == 200
                         
-                        # Icon and Label
-                        icon = "✅" if is_success else "❌"
-                        label = f"Batch {batch_num}: {resp.status_code} ({len(clean_batch)} items)"
-                        
-                        # Update Counters
-                        if is_success:
+                        if resp.status_code == 200:
                             success_count += len(clean_batch)
+                            with st.expander(f"✅ Batch {batch_num}: Success ({len(clean_batch)} items)", expanded=show_details):
+                                st.write(f"**Status Code:** {resp.status_code}")
+                                if show_details:
+                                    st.json(server_response)
                         else:
                             error_count += len(clean_batch)
-
-                        # --- LOG DISPLAY ---
-                        # We use an expander to hold the details
-                        with st.expander(f"{icon} {label}", expanded=auto_expand or not is_success):
+                            with st.expander(f"❌ Batch {batch_num}: Failed (Status {resp.status_code})", expanded=True):
+                                st.write("server response:")
+                                st.json(server_response)
                             
-                            # Use Tabs to organize the detailed view
-                            tab1, tab2, tab3 = st.tabs(["Response Body", "Sent Payload", "Response Headers"])
-                            
-                            with tab1:
-                                st.markdown("#### Server Response")
-                                st.json(response_body)
-                                
-                            with tab2:
-                                st.markdown("#### What we sent")
-                                st.json(payload)
-                                
-                            with tab3:
-                                st.markdown("#### Meta Data")
-                                st.write(f"**Status Code:** {resp.status_code}")
-                                st.write("**Headers:**")
-                                st.write(dict(resp.headers))
-
                     except Exception as e:
                         error_count += len(clean_batch)
                         st.error(f"Network Error: {e}")
 
-                    # Progress Bar Update
+                    # Progress Update
                     progress_bar.progress(min((i + batch_size) / total_records, 1.0))
                     status_box.caption(f"Processing... {min(i + batch_size, total_records)}/{total_records}")
-                    time.sleep(0.1)
+                    
+                    # --- NEW: DYNAMIC RATE LIMITING ---
+                    time.sleep(sleep_time) 
 
                 st.success(f"Job Complete! Sent: {success_count} | Failed: {error_count}")
 
