@@ -5,10 +5,10 @@ import time
 import json
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="Data Sync Pro (No Validation)", page_icon="⏱️", layout="centered")
+st.set_page_config(page_title="Data Sync Pro", page_icon="⏱️", layout="centered")
 
-st.title("⏱️ Data Sync Pro (Unvalidated)")
-st.markdown("Sync CSV data directly to API without pre-flight checks.")
+st.title("⏱️ Data Sync Pro")
+st.markdown("Sync CSV data with `brand_id` string conversion.")
 st.divider()
 
 # --- SIDEBAR CONFIGURATION ---
@@ -29,7 +29,7 @@ with st.sidebar:
     
     st.divider()
     st.header("🗺️ Source Map")
-    default_headers = "id, category, secondary_categories, title, brand, link, image_link, price, availability, sale_price, store_id, description"
+    default_headers = "id, category, secondary_categories, title, brand, brand_id, link, image_link, price, availability, sale_price, store_id, description"
     headers_input = st.text_area("CSV Header Map", value=default_headers, height=150)
     
     show_details = st.checkbox("Show Raw Server Responses", value=True)
@@ -41,8 +41,14 @@ if uploaded_file:
     user_headers = [h.strip() for h in headers_input.split(',') if h.strip()]
     
     try:
-        # Load data without strict requirements
         df = pd.read_csv(uploaded_file, names=user_headers, header=0, encoding='utf-8-sig')
+        
+        # --- NEW VALIDATION: Convert brand_id to String ---
+        if 'brand_id' in df.columns:
+            # Fill NaN with empty string first, then convert to string to avoid "nan" text
+            df['brand_id'] = df['brand_id'].fillna('').astype(str)
+            st.info("ℹ️ Column `brand_id` has been cast to String.")
+        
         st.write(f"**Preview ({len(df)} rows):**")
         st.dataframe(df.head(3))
         
@@ -56,7 +62,8 @@ if uploaded_file:
                 
                 success_count = 0
                 error_count = 0
-                # Convert entire dataframe to records, including NaNs/empty values
+                
+                # Convert to records (this preserves the string type we just set)
                 records = df.to_dict(orient='records')
                 total_records = len(records)
                 sleep_time = 1.0 / req_per_sec
