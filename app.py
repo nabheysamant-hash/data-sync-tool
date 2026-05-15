@@ -82,8 +82,8 @@ if uploaded_file:
                     clean_batch = []
                     for row in batch:
                         clean_row = {k: v for k, v in row.items() if pd.notna(v) and str(v).strip() != ""}
-                        if clean_row.get('id') and clean_row.get('title'):
-                            clean_batch.append(clean_row)
+                       # if clean_row.get('id') and clean_row.get('title'):
+                           # clean_batch.append(clean_row)
                             
                     if not clean_batch: continue
 
